@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analyse de Mesures Bogie</title>
+    
+    <!-- Chosen Palette: Warm Neutrals (Slate, Zinc) with a touch of Blue for primary actions. -->
+    <!-- Application Structure Plan: A tab-based Single-Page Application (SPA) structure is chosen to replace the multi-page design. This eliminates page reloads for a seamless, app-like user experience, which is critical for a PWA on mobile/tablet. The main views are 'Accueil', 'Mesures', 'Résultats', and 'Plan'. This logically separates the main user tasks (learning, inputting, analyzing, referencing) while keeping all functionalities instantly accessible. Data is managed centrally in a JavaScript state object, with localStorage for persistence, creating a single source of truth and simplifying data flow. User flow is intuitive: enter data in 'Mesures', which automatically populates 'Résultats' with data tables and new interactive charts for immediate analysis. PDF generation is an action within the 'Résultats' view, logically placed with the content it exports. -->
+    <!-- Visualization & Content Choices: 
+        - Report Info: Bogie measurement data (identifiers, raw measurements like H1, V1, etc.).
+        - Goal: Facilitate data entry, display results clearly, and enable visual comparison/analysis of measurements.
+        - Viz/Presentation Method: 
+            - Data Entry: A dynamic HTML form, whose fields adapt to the 'Type' of bogie, preventing errors. (HTML/JS)
+            - Results Display: Structured data tables for detailed values and tolerances. (HTML/JS)
+            - Visual Analysis: Interactive bar charts to compare measurements (e.g., side A vs. B) and radar charts to show the overall deviation profile of the bogie. (Chart.js on Canvas)
+            - Reference: A static image for the bogie plan. (HTML)
+        - Interaction: User inputs in the form dynamically update the central data state, which in turn re-renders the results tables and charts in real-time. The PDF export action captures the current view.
+        - Justification: This multi-faceted approach transforms the tool from a simple data logger into a basic analysis dashboard. The charts provide at-a-glance insights that are difficult to see in raw numbers, directly enhancing the user's ability to interpret the data.
+        - Library/Method: Vanilla JS for logic, Tailwind CSS for styling, Chart.js for visualizations, html2pdf.js for export.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-main: #f8fafc;
+            --bg-secondary: #ffffff;
+            --text-main: #1e293b;
+            --text-secondary: #475569;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --border-color: #e2e8f0;
+            --success: #16a34a;
+            --danger: #dc2626;
+        }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg-main); color: var(--text-main); }
+        .nav-item { transition: all 0.2s ease-in-out; }
+        .nav-item.active { border-color: var(--primary); color: var(--primary); background-color: #eff6ff; }
+        .nav-item:not(.active):hover { border-color: var(--border-color); background-color: #f9fafb; }
+        .chart-container { position: relative; width: 100%; max-width: 600px; margin-left: auto; margin-right: auto; height: 350px; max-height: 50vh; }
+        input[type="number"]::-webkit-inner-spin-button, 
+        input[type="number"]::-webkit-outer-spin-button { 
+          -webkit-appearance: none; 
+          margin: 0; 
+        }
+        input[type="number"] { -moz-appearance: textfield; }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="data:application/manifest+json;base64,ewogICJuYW1lIjogIkFwcCBkZSBNZXN1cmVzIEJvZ2llIiwKICAic2hvcnRfbmFtZSI6ICJNZXN1cmVzQm9naWUiLAogICJzdGFydF91cmwiOiAiLi8iLAogICJkaXNwbGF5IjogInN0YW5kYWxvbmUiLAogICJiYWNrZ3JvdW5kX2NvbG9yIjogIiNmOGZhZmMiLAogICJ0aGVtZV9jb2xvciI6ICIjMjU2M2ViIiwKICAiaWNvbnMiOiBbCiAgICB7CiAgICAgICJzcmMiOiAiaHR0cHM6Ly9wbGFjZWhvbGQuY28vMTkyeDE5Mi9FRkY2RkYvMjU2M0VCP3RleHQ9QiIsCiAgICAgICJzaXplcyI6ICIxOTJ4MTkyIiwKICAgICAgInR5cGUiOiAiaW1hZ2UvcG5nIgogICAgfSwKICAgIHsKICAgICAgInNyYyI6ICJodHRwczovL3BsYWNlaG9sZC5jby81MTJ4NTEyL0VGRjZGRi8yNTYzRUI/dGV4dD1CIiwKICAgICAgInNpemVzIjogIjUxMng1MTIiLAogICAgICAidHlwZSI6ICJpbWFnZS9wbmciCiAgICB9CiAgXQp9">
+
+</head>
+<body class="min-h-screen">
+
+    <div id="app-container" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <header class="mb-6">
+            <h1 class="text-4xl font-bold text-center text-slate-800">Application d'Analyse de Mesures</h1>
+            <p class="text-center text-lg text-slate-500 mt-2">Saisie, analyse et exportation des données de contrôle de bogies.</p>
+        </header>
+
+        <nav class="mb-6">
+            <ul class="flex items-center justify-center border-b border-slate-200">
+                <li><button data-view="accueil" class="nav-item text-lg font-semibold px-6 py-3 border-b-2 border-transparent text-slate-500">Accueil</button></li>
+                <li><button data-view="mesures" class="nav-item text-lg font-semibold px-6 py-3 border-b-2 border-transparent text-slate-500">Mesures</button></li>
+                <li><button data-view="resultats" class="nav-item text-lg font-semibold px-6 py-3 border-b-2 border-transparent text-slate-500">Résultats & Analyse</button></li>
+                <li><button data-view="plan" class="nav-item text-lg font-semibold px-6 py-3 border-b-2 border-transparent text-slate-500">Plan Bogie</button></li>
+            </ul>
+        </nav>
+        
+        <main id="main-content">
+            <!-- Accueil View -->
+            <div id="accueil-view" class="view-content hidden">
+                <div class="bg-white p-8 rounded-lg shadow-sm">
+                    <h2 class="text-2xl font-bold mb-4">Bienvenue !</h2>
+                    <div class="space-y-4 text-slate-600">
+                        <p>Cette application est un outil complet pour les techniciens de maintenance, conçue pour simplifier le processus de mesure et d'analyse des bogies d'essieux. Elle a été optimisée pour une expérience utilisateur fluide et efficace, que vous soyez sur un ordinateur de bureau, une tablette ou un mobile.</p>
+                        <p>Voici ce que vous pouvez faire :</p>
+                        <ul class="list-disc list-inside space-y-2">
+                            <li><strong class="font-semibold text-slate-700">Saisir les données :</strong> Rendez-vous dans l'onglet <span class="font-bold text-blue-600">"Mesures"</span> pour entrer toutes les valeurs de contrôle pour un bogie spécifique. Le formulaire s'adapte automatiquement au type de bogie sélectionné.</li>
+                            <li><strong class="font-semibold text-slate-700">Analyser les résultats :</strong> L'onglet <span class="font-bold text-blue-600">"Résultats & Analyse"</span> présente un résumé clair de vos saisies, les calculs de conformité, et des graphiques interactifs pour une interprétation visuelle rapide des données.</li>
+                            <li><strong class="font-semibold text-slate-700">Consulter les schémas :</strong> Le <span class="font-bold text-blue-600">"Plan Bogie"</span> est toujours à portée de clic pour référence visuelle.</li>
+                            <li><strong class="font-semibold text-slate-700">Exporter et Partager :</strong> Générez un rapport PDF professionnel de vos résultats directement depuis la page d'analyse.</li>
+                        </ul>
+                         <p>Vos données sont sauvegardées automatiquement dans votre navigateur. Vous pouvez fermer la page et reprendre votre travail plus tard. Utilisez le bouton "Tout Effacer" sur la page de mesures pour réinitialiser complètement l'application.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mesures View -->
+            <div id="mesures-view" class="view-content hidden">
+                <form id="mesuresForm" class="bg-white p-8 rounded-lg shadow-sm space-y-8">
+                     <p class="text-slate-600">Remplissez les champs ci-dessous pour commencer une nouvelle analyse. Les informations générales sont nécessaires pour identifier le bogie. Les champs de mesure s'adapteront en fonction du "Type" sélectionné. Une fois toutes les données saisies, cliquez sur "Valider et Voir les Résultats" pour procéder à l'analyse.</p>
+                    <!-- Section Informations Générales -->
+                    <div id="general-info-section">
+                        <h3 class="text-xl font-semibold border-b pb-2 mb-4">Informations Générales</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <input type="text" id="om" name="om" placeholder="OM" required class="p-2 border rounded w-full">
+                            <input type="text" id="bogieNo" name="bogieNo" placeholder="N° Bogie" required class="p-2 border rounded w-full">
+                            <select id="typeNo" name="typeNo" required class="p-2 border rounded w-full bg-white">
+                                <option value="BM">BM</option>
+                                <option value="BIM">BIM</option>
+                                <option value="BIM-R">BIM-R</option>
+                            </select>
+                            <input type="date" id="date" name="date" required class="p-2 border rounded w-full">
+                        </div>
+                    </div>
+                    <!-- Conteneur pour les champs de mesure dynamiques -->
+                    <div id="measurements-container" class="space-y-6"></div>
+                    <!-- Actions -->
+                    <div class="flex items-center justify-end space-x-4 pt-4 border-t">
+                        <button type="button" id="clearDataBtn" class="px-6 py-2 rounded bg-red-600 text-white font-semibold hover:bg-red-700 transition">Tout Effacer</button>
+                        <button type="submit" class="px-6 py-2 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700 transition">Valider et Voir les Résultats</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Resultats View -->
+            <div id="resultats-view" class="view-content hidden">
+                <div class="bg-white p-8 rounded-lg shadow-sm">
+                    <p class="text-slate-600 mb-6">Voici le résumé complet de votre saisie et les analyses qui en découlent. Vous pouvez examiner les valeurs brutes, les calculs de conformité, ainsi que les graphiques interactifs qui permettent de visualiser rapidement les écarts et les tendances. Cliquez sur "Générer PDF" pour créer un rapport exportable.</p>
+                    <div id="results-content" class="space-y-8">
+                        <!-- Content generated by JS -->
+                    </div>
+                    <div class="text-center mt-8 pt-6 border-t">
+                         <button id="exportPdfBtn" class="px-6 py-2 rounded bg-green-600 text-white font-semibold hover:bg-green-700 transition">Générer PDF</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Plan View -->
+            <div id="plan-view" class="view-content hidden">
+                 <div class="bg-white p-8 rounded-lg shadow-sm">
+                    <h2 class="text-2xl font-bold mb-4">Plan du Bogie</h2>
+                    <p class="text-slate-600 mb-6">Ce schéma est une référence visuelle pour les points de mesure standards sur un bogie. Utilisez-le pour confirmer l'emplacement des mesures que vous saisissez dans l'application.</p>
+                    <div class="flex justify-center items-center bg-slate-100 rounded p-4">
+                        <img src="https://placehold.co/1200x800/e2e8f0/475569?text=Plan+d'essieux" alt="Plan du bogie" class="max-w-full h-auto rounded">
+                    </div>
+                </div>
+            </div>
+        </main>
+        
+        <!-- Modal for confirmation -->
+        <div id="modal-container" class="hidden"></div>
+        <!-- Toast for simple messages -->
+        <div id="toast-container" class="fixed bottom-5 right-5 z-[1100]"></div>
+
+    </div>
+
+    <script type="module">
+        const App = {
+            state: {
+                currentView: 'accueil',
+                formData: {},
+                charts: {}
+            },
+            
+            init() {
+                this.registerServiceWorker();
+                this.setupEventListeners();
+                this.loadState();
+                this.navigateTo(this.state.currentView, true);
+            },
+
+            setupEventListeners() {
+                document.querySelector('nav').addEventListener('click', e => {
+                    if (e.target.matches('button[data-view]')) {
+                        this.navigateTo(e.target.dataset.view);
+                    }
+                });
+
+                const mesuresForm = document.getElementById('mesuresForm');
+                mesuresForm.addEventListener('submit', this.handleFormSubmit.bind(this));
+                document.getElementById('typeNo').addEventListener('change', this.renderMeasurementFields.bind(this));
+                document.getElementById('clearDataBtn').addEventListener('click', this.handleClearData.bind(this));
+                document.getElementById('exportPdfBtn').addEventListener('click', this.handleExportPdf.bind(this));
+            },
+
+            navigateTo(viewId, isInitial = false) {
+                if (!document.getElementById(`${viewId}-view`)) {
+                    viewId = 'accueil';
+                }
+                
+                document.querySelectorAll('.view-content').forEach(v => v.classList.add('hidden'));
+                document.getElementById(`${viewId}-view`).classList.remove('hidden');
+
+                document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+                document.querySelector(`button[data-view="${viewId}"]`).classList.add('active');
+                
+                this.state.currentView = viewId;
+                if (!isInitial) this.saveState();
+                
+                if(viewId === 'mesures') this.renderMeasurementFields();
+                if(viewId === 'resultats') this.renderResults();
+            },
+
+            handleFormSubmit(e) {
+                e.preventDefault();
+                const form = e.target;
+                const formData = new FormData(form);
+                const data = Object.fromEntries(formData.entries());
+                
+                // Convert numeric strings to numbers
+                Object.keys(data).forEach(key => {
+                    if (!isNaN(data[key]) && data[key] !== '') {
+                        data[key] = parseFloat(data[key]);
+                    }
+                });
+
+                this.state.formData = data;
+                this.saveState();
+                this.showToast('Données validées avec succès !', 'success');
+                this.navigateTo('resultats');
+            },
+
+            handleClearData() {
+                this.showConfirm(
+                    "Voulez-vous vraiment effacer toutes les données enregistrées ?",
+                    () => {
+                        this.state.formData = {};
+                        this.saveState();
+                        document.getElementById('mesuresForm').reset();
+                        this.renderMeasurementFields();
+                        this.showToast('Toutes les données ont été effacées.', 'success');
+                    }
+                );
+            },
+
+            handleExportPdf() {
+                const element = document.getElementById('results-content');
+                const data = this.state.formData;
+                let formattedDate = 'nodate';
+                if(data.date){
+                    const date = new Date(data.date);
+                    const year = date.getFullYear();
+                    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const day = date.getDate().toString().padStart(2, '0');
+                    formattedDate = `${year}${month}${day}`;
+                }
+
+                const filename = `${formattedDate}_${data.om || 'OM'}_${data.typeNo || 'TYPE'}_${data.bogieNo || 'BOGIE'}.pdf`;
+
+                this.showToast('Génération du PDF en cours...', 'info');
+                html2pdf().set({
+                  margin: [0.3, 0.3, 0.3, 0.3],
+                  filename: filename,
+                  image: { type: 'jpeg', quality: 0.98 },
+                  html2canvas: { scale: 2, useCORS: true, logging: false },
+                  jsPDF: { unit: 'in', format: 'a4', orientation: 'landscape' },
+                  pagebreak: { mode: 'avoid-all' }
+                }).from(element).save();
+            },
+
+            saveState() {
+                localStorage.setItem('bogieAppState', JSON.stringify(this.state));
+            },
+
+            loadState() {
+                const savedState = localStorage.getItem('bogieAppState');
+                if (savedState) {
+                    const parsedState = JSON.parse(savedState);
+                    // Simple merge, can be more sophisticated
+                    this.state.currentView = parsedState.currentView || 'accueil';
+                    this.state.formData = parsedState.formData || {};
+
+                    // Repopulate form
+                    const form = document.getElementById('mesuresForm');
+                    Object.keys(this.state.formData).forEach(key => {
+                        const input = form.elements[key];
+                        if (input) {
+                            input.value = this.state.formData[key];
+                        }
+                    });
+                }
+            },
+            
+            getMeasurementGroups(type) {
+                const groups = {
+                    base: [
+                        { name: "Chasse et Rotation", fields: ["H1", "H2", "V1", "V2"], tolerance: { 'H': 2, 'V': 2 } },
+                        { name: "Voile et Faux-Rond", fields: ["H3", "H4", "V3", "V4"], tolerance: { 'H': 0.1, 'V': 0.1 } },
+                    ],
+                    extended: [
+                        { name: "Contrôle Axe des Fusées", fields: ["H5", "H6", "V5", "V6"], subGroups: [
+                                { name: "Contrôle grand rayon des fusées", fields: ["Grand rayon vertical", "Grand rayon horizontal"], tolerance: { 'default': 0.05 } },
+                                { name: "Contrôle petit rayon des fusées", fields: ["Petit rayon vertical", "Petit rayon horizontal"], tolerance: { 'default': 0.05 } }
+                            ], 
+                            tolerance: { 'H': 0.3, 'V': 0.3 } 
+                        },
+                        { name: "Contrôle alignement des fusées", fields: ["H7", "H8", "V7", "V8"], tolerance: { 'H': 0.3, 'V': 0.3 } }
+                    ]
+                };
+                
+                if (type === 'BM') {
+                    return groups.base;
+                }
+                return [...groups.base, ...groups.extended];
+            },
+
+            renderMeasurementFields() {
+                const type = document.getElementById('typeNo').value;
+                const container = document.getElementById('measurements-container');
+                container.innerHTML = ''; 
+                const groups = this.getMeasurementGroups(type);
+
+                groups.forEach(group => {
+                    const groupEl = document.createElement('div');
+                    groupEl.innerHTML = `<h3 class="text-xl font-semibold border-b pb-2 mb-4">${group.name}</h3>`;
+                    
+                    const fieldsContainer = document.createElement('div');
+                    fieldsContainer.className = 'grid grid-cols-1 md:grid-cols-4 gap-x-6 gap-y-4';
+                    
+                    group.fields.forEach(field => {
+                        for(let side of ['A', 'B']) {
+                            const inputId = `${field}-${side}`;
+                            fieldsContainer.innerHTML += `
+                                <div>
+                                    <label for="${inputId}" class="block text-sm font-medium text-slate-700">${field} côté ${side}</label>
+                                    <input type="number" step="0.01" id="${inputId}" name="${inputId}" class="mt-1 p-2 border rounded w-full" value="${this.state.formData[inputId] || ''}">
+                                </div>
+                            `;
+                        }
+                    });
+                    
+                    groupEl.appendChild(fieldsContainer);
+
+                    if (group.subGroups) {
+                        group.subGroups.forEach(subGroup => {
+                            const subGroupEl = document.createElement('div');
+                            subGroupEl.className = 'mt-6';
+                            subGroupEl.innerHTML = `<h4 class="text-lg font-medium text-slate-800 mb-2">${subGroup.name}</h4>`;
+                            const subFieldsContainer = document.createElement('div');
+                            subFieldsContainer.className = 'grid grid-cols-1 md:grid-cols-4 gap-x-6 gap-y-4';
+
+                            for(let i=1; i<=3; i++) {
+                                subGroup.fields.forEach(field => {
+                                    for(let side of ['A', 'B']) {
+                                        const inputId = `${field.replace(/\s/g, '')}${i}-${side}`;
+                                        subFieldsContainer.innerHTML += `
+                                             <div>
+                                                <label for="${inputId}" class="block text-sm font-medium text-slate-700">${field} ${i} côté ${side}</label>
+                                                <input type="number" step="0.01" id="${inputId}" name="${inputId}" class="mt-1 p-2 border rounded w-full" value="${this.state.formData[inputId] || ''}">
+                                            </div>
+                                        `;
+                                    }
+                                });
+                            }
+                            subGroupEl.appendChild(subFieldsContainer);
+                            groupEl.appendChild(subGroupEl);
+                        });
+                    }
+                    container.appendChild(groupEl);
+                });
+            },
+            
+            calculateResults(data) {
+                if(!data || Object.keys(data).length === 0) return null;
+                const calculated = {};
+                const groups = this.getMeasurementGroups(data.typeNo);
+
+                groups.forEach(group => {
+                    group.fields.forEach(field => {
+                        const valA = data[`${field}-A`];
+                        const valB = data[`${field}-B`];
+                        if(typeof valA === 'number' && typeof valB === 'number') {
+                            const result = (valA - valB).toFixed(2);
+                            calculated[`C-${field}`] = result;
+                            
+                            const tolerance = group.tolerance[field.charAt(0)] || group.tolerance.default;
+                            if(tolerance) {
+                                calculated[`Conform-${field}`] = Math.abs(result) <= tolerance;
+                            }
+                        }
+                    });
+
+                    if (group.subGroups) {
+                        group.subGroups.forEach(subGroup => {
+                            subGroup.fields.forEach(field => {
+                                for (let i = 1; i <= 3; i++) {
+                                    const fieldName = field.replace(/\s/g, '');
+                                    const valA = data[`${fieldName}${i}-A`];
+                                    const valB = data[`${fieldName}${i}-B`];
+                                    if(typeof valA === 'number' && typeof valB === 'number') {
+                                        const result = (valA - valB).toFixed(2);
+                                        calculated[`C-${fieldName}${i}`] = result;
+                                        
+                                        const tolerance = subGroup.tolerance.default;
+                                        if(tolerance){
+                                            calculated[`Conform-${fieldName}${i}`] = Math.abs(result) <= tolerance;
+                                        }
+                                    }
+                                }
+                            });
+                        });
+                    }
+                });
+                return { ...data, ...calculated };
+            },
+
+            renderResults() {
+                const container = document.getElementById('results-content');
+                const dataWithCalcs = this.calculateResults(this.state.formData);
+
+                if (!dataWithCalcs) {
+                    container.innerHTML = `<p class="text-center text-slate-500">Aucune donnée à afficher. Veuillez remplir le formulaire dans l'onglet "Mesures".</p>`;
+                    return;
+                }
+                
+                const getConformityClass = (isConform) => {
+                    if (isConform === true) return 'text-green-600 font-semibold';
+                    if (isConform === false) return 'text-red-600 font-semibold';
+                    return 'text-slate-500';
+                };
+                
+                const getConformityText = (isConform) => {
+                    if (isConform === true) return 'Conforme';
+                    if (isConform === false) return 'Non Conforme';
+                    return 'N/A';
+                };
+
+                let html = `
+                    <div id="general-info-results">
+                        <h3 class="text-2xl font-bold border-b pb-2 mb-4">Informations Générales</h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-lg">
+                            <p><strong>OM:</strong> ${dataWithCalcs.om || 'N/A'}</p>
+                            <p><strong>N° Bogie:</strong> ${dataWithCalcs.bogieNo || 'N/A'}</p>
+                            <p><strong>Type:</strong> ${dataWithCalcs.typeNo || 'N/A'}</p>
+                            <p><strong>Date:</strong> ${dataWithCalcs.date || 'N/A'}</p>
+                        </div>
+                    </div>
+                `;
+
+                const groups = this.getMeasurementGroups(dataWithCalcs.typeNo);
+
+                groups.forEach(group => {
+                    html += `
+                        <div class="mt-8">
+                            <h3 class="text-2xl font-bold border-b pb-2 mb-4">${group.name}</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">`;
+                    
+                    group.fields.forEach(field => {
+                        const valA = dataWithCalcs[`${field}-A`];
+                        const valB = dataWithCalcs[`${field}-B`];
+                        const calc = dataWithCalcs[`C-${field}`];
+                        const isConform = dataWithCalcs[`Conform-${field}`];
+                        const tolerance = group.tolerance[field.charAt(0)] || group.tolerance.default;
+                        
+                        html += `
+                            <div class="bg-slate-50 p-4 rounded-lg border">
+                                <h4 class="font-bold text-lg mb-2">${field}</h4>
+                                <p>Côté A: <span class="font-mono float-right">${valA || 'N/A'}</span></p>
+                                <p>Côté B: <span class="font-mono float-right">${valB || 'N/A'}</span></p>
+                                <p class="mt-2 pt-2 border-t">Calcul (A-B): <span class="font-mono float-right">${calc || 'N/A'}</span></p>
+                                <p>Tolérance: <span class="font-mono float-right">±${tolerance}</span></p>
+                                <p class="mt-1">Statut: <span class="float-right ${getConformityClass(isConform)}">${getConformityText(isConform)}</span></p>
+                            </div>
+                        `;
+                    });
+
+                    html += `</div>`; // Close grid
+
+                    if (group.subGroups) {
+                         group.subGroups.forEach(subGroup => {
+                            html += `
+                                <div class="mt-6">
+                                    <h4 class="text-xl font-semibold text-slate-800 mb-4">${subGroup.name}</h4>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">`;
+
+                                for(let i=1; i<=3; i++) {
+                                    subGroup.fields.forEach(field => {
+                                        const fieldName = field.replace(/\s/g, '');
+                                        const valA = dataWithCalcs[`${fieldName}${i}-A`];
+                                        const valB = dataWithCalcs[`${fieldName}${i}-B`];
+                                        const calc = dataWithCalcs[`C-${fieldName}${i}`];
+                                        const isConform = dataWithCalcs[`Conform-${fieldName}${i}`];
+                                        const tolerance = subGroup.tolerance.default;
+                                        
+                                        html += `
+                                            <div class="bg-slate-50 p-4 rounded-lg border">
+                                                <h5 class="font-bold text-md mb-2">${field} ${i}</h5>
+                                                <p>Côté A: <span class="font-mono float-right">${valA || 'N/A'}</span></p>
+                                                <p>Côté B: <span class="font-mono float-right">${valB || 'N/A'}</span></p>
+                                                <p class="mt-2 pt-2 border-t">Calcul (A-B): <span class="font-mono float-right">${calc || 'N/A'}</span></p>
+                                                <p>Tolérance: <span class="font-mono float-right">±${tolerance}</span></p>
+                                                <p class="mt-1">Statut: <span class="float-right ${getConformityClass(isConform)}">${getConformityText(isConform)}</span></p>
+                                            </div>
+                                        `;
+                                    });
+                                }
+                                html += `</div></div>`; // Close sub-grid and sub-group
+                         });
+                    }
+                    html += `</div>`; // Close group
+                });
+                
+                // Visualisation Section
+                html += `
+                    <div class="mt-8">
+                        <h3 class="text-2xl font-bold border-b pb-2 mb-4">Analyse Visuelle</h3>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div class="bg-slate-50 p-4 rounded-lg border">
+                                <h4 class="text-xl font-semibold text-center mb-4">Écarts (Chasse, Voile, etc.)</h4>
+                                <div class="chart-container"><canvas id="mainChart"></canvas></div>
+                            </div>
+                             <div class="bg-slate-50 p-4 rounded-lg border">
+                                <h4 class="text-xl font-semibold text-center mb-4">Profil de Conformité</h4>
+                               <div class="chart-container"><canvas id="radarChart"></canvas></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                container.innerHTML = html;
+                this.renderCharts(dataWithCalcs);
+            },
+            
+            renderCharts(data) {
+                // Clear existing charts
+                Object.values(this.state.charts).forEach(chart => chart.destroy());
+                this.state.charts = {};
+
+                // Main Comparison Chart
+                const mainChartCtx = document.getElementById('mainChart').getContext('2d');
+                if (mainChartCtx) {
+                    const chartData = { labels: [], datasets: [{ label: 'Écart (A-B)', data: [], backgroundColor: [] }] };
+                    const groups = this.getMeasurementGroups(data.typeNo);
+                    groups.forEach(group => {
+                        group.fields.forEach(field => {
+                            if (data[`C-${field}`]) {
+                                chartData.labels.push(field);
+                                chartData.datasets[0].data.push(data[`C-${field}`]);
+                                chartData.datasets[0].backgroundColor.push(data[`Conform-${field}`] ? 'rgba(22, 163, 74, 0.6)' : 'rgba(220, 38, 38, 0.6)');
+                            }
+                        });
+                    });
+
+                    this.state.charts.mainChart = new Chart(mainChartCtx, {
+                        type: 'bar',
+                        data: chartData,
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false }, title: { display: true, text: 'Comparaison des écarts mesurés' } },
+                            scales: { y: { beginAtZero: true, title: { display: true, text: 'Écart (mm)' } } }
+                        }
+                    });
+                }
+                
+                // Radar Chart
+                const radarChartCtx = document.getElementById('radarChart').getContext('2d');
+                if (radarChartCtx) {
+                     const radarData = { labels: [], datasets: [{ label: 'Écart Absolu', data: [], borderColor: 'rgb(37, 99, 235)', backgroundColor: 'rgba(37, 99, 235, 0.2)' }, { label: 'Tolérance', data: [], borderColor: 'rgb(220, 38, 38)', backgroundColor: 'rgba(220, 38, 38, 0.2)' }] };
+                     const groups = this.getMeasurementGroups(data.typeNo);
+                     groups.forEach(group => {
+                        group.fields.forEach(field => {
+                             if (data[`C-${field}`]) {
+                                const tolerance = group.tolerance[field.charAt(0)] || group.tolerance.default;
+                                radarData.labels.push(field);
+                                radarData.datasets[0].data.push(Math.abs(data[`C-${field}`]));
+                                radarData.datasets[1].data.push(tolerance);
+                            }
+                        });
+                     });
+
+                    this.state.charts.radarChart = new Chart(radarChartCtx, {
+                        type: 'radar',
+                        data: radarData,
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                             plugins: { title: { display: true, text: 'Écarts vs Tolérances' } },
+                            scales: { r: { beginAtZero: true } }
+                        }
+                    });
+                }
+            },
+            
+            showToast(message, type = 'info') {
+                const container = document.getElementById('toast-container');
+                const toast = document.createElement('div');
+                const colors = {
+                    info: 'bg-blue-500',
+                    success: 'bg-green-500',
+                    error: 'bg-red-500',
+                };
+                toast.className = `px-4 py-3 rounded text-white mb-2 shadow-lg ${colors[type]}`;
+                toast.textContent = message;
+                container.appendChild(toast);
+                setTimeout(() => {
+                    toast.style.transition = 'opacity 0.5s ease';
+                    toast.style.opacity = '0';
+                    setTimeout(() => toast.remove(), 500);
+                }, 3000);
+            },
+            
+            showConfirm(message, onConfirm) {
+                const modalContainer = document.getElementById('modal-container');
+                modalContainer.innerHTML = `
+                    <div class="modal-overlay">
+                        <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm mx-auto">
+                            <p class="text-lg mb-4">${message}</p>
+                            <div class="flex justify-end space-x-4">
+                                <button id="modal-cancel" class="px-4 py-2 rounded bg-slate-200 hover:bg-slate-300">Annuler</button>
+                                <button id="modal-confirm" class="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700">Confirmer</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                modalContainer.classList.remove('hidden');
+
+                document.getElementById('modal-confirm').onclick = () => {
+                    onConfirm();
+                    modalContainer.classList.add('hidden');
+                };
+                document.getElementById('modal-cancel').onclick = () => {
+                     modalContainer.classList.add('hidden');
+                };
+            },
+
+            registerServiceWorker() {
+                if ('serviceWorker' in navigator) {
+                    const swContent = `
+                        const CACHE_NAME = 'bogie-app-cache-v1';
+                        const urlsToCache = ['.', 'https://cdn.tailwindcss.com'];
+                        self.addEventListener('install', event => {
+                          event.waitUntil(
+                            caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
+                          );
+                        });
+                        self.addEventListener('fetch', event => {
+                          event.respondWith(
+                            caches.match(event.request).then(response => response || fetch(event.request))
+                          );
+                        });
+                    `;
+                    const blob = new Blob([swContent], { type: 'application/javascript' });
+                    const swUrl = URL.createObjectURL(blob);
+
+                    navigator.serviceWorker.register(swUrl)
+                        .then(() => console.log('Service Worker optimisé enregistré.'))
+                        .catch(error => console.error('Erreur Service Worker:', error));
+                }
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => App.init());
+    </script>
+</body>
+</html>
